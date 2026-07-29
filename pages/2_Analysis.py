@@ -343,8 +343,8 @@ with tab_tradeoff:
         key="to_feat_select"
     )
 
-    # Compute sensitivity curve data
-    df_sens = compute_feature_sensitivity(artifacts, sel_feat_to, num_points=35)
+    # Load pre-computed sensitivity data instantly from cache
+    df_sens = compute_feature_sensitivity(sel_feat_to)
     feat_name_disp = FRIENDLY_NAMES.get(sel_feat_to, sel_feat_to)
 
     col_sens_charts, col_sens_insights = st.columns([1.4, 1.0])

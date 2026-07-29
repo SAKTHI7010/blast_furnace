@@ -49,6 +49,18 @@ def _get_artifact(art_dict: dict, prefix: str, tgt: str):
     return None
 
 @st.cache_resource(show_spinner="Loading ML prediction pipelines...")
+def load_sensitivity_cache():
+    """Load pre-computed sensitivity curve data from training."""
+    cache_path = os.path.join(MODEL_DIR, 'sensitivity_cache.pkl')
+    if not os.path.exists(cache_path):
+        return {}
+    try:
+        return joblib.load(cache_path)
+    except Exception:
+        return {}
+
+
+@st.cache_resource(show_spinner="Loading ML prediction pipelines...")
 def load_all_pipelines():
     """Load all pipeline artifacts from models/ directory."""
     meta_path = os.path.join(MODEL_DIR, 'feature_meta.pkl')
@@ -239,41 +251,12 @@ def get_feature_contributions(artifacts: dict, pipeline_type: str, tgt: str, inp
     return df
 
 
-def compute_feature_sensitivity(artifacts: dict, feature_name: str, num_points: int = 30) -> pd.DataFrame:
-    """Compute model prediction trade-off sensitivity curves as feature_name varies."""
-    meta = artifacts['meta']['regression']
-    tgt_meta_si = _get_meta_target(meta, 'HM_Si')
-    tgt_meta_temp = _get_meta_target(meta, 'HM_Temp')
-
-    ranges_si = tgt_meta_si.get('feature_ranges', {})
-    ranges_temp = tgt_meta_temp.get('feature_ranges', {})
-
-    # Combine top features
-    all_feats = list(dict.fromkeys(tgt_meta_si.get('top_features', []) + tgt_meta_temp.get('top_features', [])))
-
-    # Get feature range
-    f_info = ranges_si.get(feature_name, ranges_temp.get(feature_name, {'min': 0.0, 'max': 100.0, 'mean': 50.0}))
-    min_val, max_val = float(f_info['min']), float(f_info['max'])
-
-    # Baseline input values using mean values
-    base_inputs = {}
-    for f in all_feats:
-        info = ranges_si.get(f, ranges_temp.get(f, {'mean': 50.0}))
-        base_inputs[f] = float(info['mean'])
-
-    grid_vals = np.linspace(min_val, max_val, num_points)
-    records = []
-
-    for val in grid_vals:
-        curr_inputs = {**base_inputs, feature_name: val}
-        preds = predict_regression(artifacts, curr_inputs)
-        si_val = preds['HM_Si']['prediction'] if 'HM_Si' in preds else np.nan
-        temp_val = preds['HM_Temp']['prediction'] if 'HM_Temp' in preds else np.nan
-        records.append({
-            'FeatureValue': val,
-            'Predicted_HM_SI': si_val,
-            'Predicted_HM_TEMP': temp_val,
-        })
-
-    return pd.DataFrame(records)
+def compute_feature_sensitivity(feature_name: str) -> pd.DataFrame:
+    """Load pre-computed sensitivity curve from cache (instant — no live model calls)."""
+    cache = load_sensitivity_cache()
+    records = cache.get(feature_name, [])
+    if records:
+        return pd.DataFrame(records)
+    # Fallback: empty DataFrame
+    return pd.DataFrame(columns=['FeatureValue', 'Predicted_HM_SI', 'Predicted_HM_TEMP'])
 

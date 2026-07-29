@@ -433,6 +433,65 @@ joblib.dump(imputer_ts, 'models/imputer_timeseries.pkl')
 
 # Save metadata
 joblib.dump(feature_meta, 'models/feature_meta.pkl')
+
+# ── PRE-COMPUTE SENSITIVITY CACHE ────────────────────────────
+print("\n[6/6] Pre-computing sensitivity curves for all top regression features...")
+
+# Gather all unique features from regression pipeline
+all_reg_feats_si   = feature_meta['regression']['HM_Si']['top_features']
+all_reg_feats_temp = feature_meta['regression']['HM_Temp']['top_features']
+all_sens_feats = list(dict.fromkeys(all_reg_feats_si + all_reg_feats_temp))
+
+# We need the loaded best models to compute predictions
+reg_model_si   = joblib.load('models/model_regression_HM_Si.pkl')
+reg_model_temp = joblib.load('models/model_regression_HM_Temp.pkl')
+reg_scaler_si  = joblib.load('models/scaler_regression_HM_Si.pkl')
+reg_scaler_temp= joblib.load('models/scaler_regression_HM_Temp.pkl')
+
+def _predict_reg_fast(feat_list_si, feat_list_temp, input_dict):
+    """Fast dual-target regression prediction using preloaded objects."""
+    row_si   = np.array([[input_dict.get(f, feature_meta['regression']['HM_Si']['feature_ranges'].get(f, {}).get('mean', 0)) for f in feat_list_si]], dtype=float)
+    row_temp = np.array([[input_dict.get(f, feature_meta['regression']['HM_Temp']['feature_ranges'].get(f, {}).get('mean', 0)) for f in feat_list_temp]], dtype=float)
+    try:
+        si_pred   = float(reg_model_si.predict(reg_scaler_si.transform(row_si))[0])
+    except Exception:
+        si_pred = np.nan
+    try:
+        temp_pred = float(reg_model_temp.predict(reg_scaler_temp.transform(row_temp))[0])
+    except Exception:
+        temp_pred = np.nan
+    return si_pred, temp_pred
+
+NUM_POINTS = 25
+sensitivity_cache = {}
+
+ranges_si   = feature_meta['regression']['HM_Si']['feature_ranges']
+ranges_temp = feature_meta['regression']['HM_Temp']['feature_ranges']
+
+# Build base inputs (means)
+base_inputs = {}
+for f in all_sens_feats:
+    info = ranges_si.get(f, ranges_temp.get(f, {'mean': 0.0}))
+    base_inputs[f] = float(info.get('mean', 0.0))
+
+for feat in all_sens_feats:
+    f_info = ranges_si.get(feat, ranges_temp.get(feat, {'min': 0.0, 'max': 1.0}))
+    min_v, max_v = float(f_info.get('min', 0)), float(f_info.get('max', 1))
+    grid = np.linspace(min_v, max_v, NUM_POINTS)
+    records = []
+    for val in grid:
+        inp = {**base_inputs, feat: val}
+        si_p, temp_p = _predict_reg_fast(all_reg_feats_si, all_reg_feats_temp, inp)
+        records.append({'FeatureValue': round(float(val), 4),
+                        'Predicted_HM_SI': round(si_p, 5) if not np.isnan(si_p) else None,
+                        'Predicted_HM_TEMP': round(temp_p, 3) if not np.isnan(temp_p) else None})
+    sensitivity_cache[feat] = records
+    print(f"  ✓ Cached sensitivity curve for: {feat}")
+
+joblib.dump(sensitivity_cache, 'models/sensitivity_cache.pkl')
+print("  ✅ Sensitivity cache saved to models/sensitivity_cache.pkl")
+
 print("\n" + "=" * 70)
 print("  ✅ SUCCESS: ALL 3 PIPELINES TRAINED & ARTIFACTS SAVED TO models/")
 print("=" * 70)
+
